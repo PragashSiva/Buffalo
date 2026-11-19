@@ -7,6 +7,63 @@ const UA = {
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
 };
 
+/** Optional Finnhub key (free tier). When set, Finnhub is tried first:
+ *  unlike Yahoo/Stooq it is built for server-side use, so Vercel's
+ *  datacenter IPs are not blocked. Get one free at finnhub.io. */
+const FINNHUB_KEY = process.env.FINNHUB_API_KEY ?? "";
+
+async function finnhubChart(symbol: string, rangeKey: string): Promise<ChartResult> {
+  if (!FINNHUB_KEY) throw new Error("Finnhub key not configured");
+  const cfg: Record<string, { resolution: string; seconds: number }> = {
+    "1D": { resolution: "1", seconds: 86400 },
+    "5D": { resolution: "5", seconds: 5 * 86400 },
+    "1M": { resolution: "D", seconds: 30 * 86400 },
+    "6M": { resolution: "D", seconds: 180 * 86400 },
+    "1Y": { resolution: "D", seconds: 365 * 86400 },
+  };
+  const { resolution, seconds } = cfg[rangeKey] ?? cfg["1M"];
+  const to = Math.floor(Date.now() / 1000);
+  const from = to - seconds;
+  const url = `https://finnhub.io/api/v1/stock/candle?symbol=${encodeURIComponent(
+    symbol
+  )}&resolution=${resolution}&from=${from}&to=${to}&token=${FINNHUB_KEY}`;
+  const res = await fetch(url, { next: { revalidate: 15 } });
+  if (!res.ok) throw new Error(`Finnhub returned HTTP ${res.status}`);
+  const json = await res.json();
+  if (json?.s !== "ok" || !Array.isArray(json.c) || json.c.length === 0)
+    throw new Error(`Finnhub returned no data for ${symbol}`);
+  const points: { t: number; close: number }[] = (json.t as number[])
+    .map((t, i) => ({ t: t * 1000, close: json.c[i] as number }))
+    .filter((p) => Number.isFinite(p.close));
+  if (points.length === 0) throw new Error(`Finnhub returned no price points for ${symbol}`);
+  return {
+    symbol,
+    name: null,
+    currency: "USD",
+    price: points[points.length - 1].close,
+    prevClose: points.length > 1 ? points[points.length - 2].close : null,
+    points,
+    source: "finnhub",
+  };
+}
+
+async function finnhubQuote(symbol: string): Promise<{
+  price: number;
+  prevClose: number | null;
+  name: string | null;
+}> {
+  if (!FINNHUB_KEY) throw new Error("Finnhub key not configured");
+  const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(
+    symbol
+  )}&token=${FINNHUB_KEY}`;
+  const res = await fetch(url, { next: { revalidate: 15 } });
+  if (!res.ok) throw new Error(`Finnhub returned HTTP ${res.status}`);
+  const json = await res.json();
+  if (typeof json?.c !== "number" || json.c === 0)
+    throw new Error(`Finnhub returned no price for ${symbol}`);
+  return { price: json.c, prevClose: typeof json.pc === "number" ? json.pc : null, name: null };
+}
+
 const RANGES: Record<string, { range: string; interval: string; stooqDays: number }> = {
   "1D": { range: "1d", interval: "1m", stooqDays: 0 },
   "5D": { range: "5d", interval: "5m", stooqDays: 5 },
@@ -92,6 +149,13 @@ async function stooqDaily(symbol: string, days: number): Promise<ChartResult> {
  */
 export async function fetchChart(symbol: string, rangeKey: string): Promise<ChartResult> {
   const cfg = RANGES[rangeKey] ?? RANGES["1M"];
+  if (FINNHUB_KEY) {
+    try {
+      return await finnhubChart(symbol, rangeKey);
+    } catch {
+      // fall through to Yahoo
+    }
+  }
   try {
     return await yahooChart(symbol, cfg.range, cfg.interval, "query1.finance.yahoo.com");
   } catch {
@@ -110,6 +174,13 @@ export async function fetchQuote(symbol: string): Promise<{
   prevClose: number | null;
   name: string | null;
 }> {
+  if (FINNHUB_KEY) {
+    try {
+      return await finnhubQuote(symbol);
+    } catch {
+      // fall through to Yahoo
+    }
+  }
   for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
     try {
       const c = await yahooChart(symbol, "1d", "1m", host);

@@ -12,7 +12,7 @@ export interface ChartData {
   price: number | null;
   prevClose: number | null;
   points: ChartPoint[];
-  source: "yahoo" | "stooq";
+  source: "yahoo" | "stooq" | "finnhub";
 }
 
 export interface Position {
