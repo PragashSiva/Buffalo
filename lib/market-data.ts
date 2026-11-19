@@ -24,8 +24,13 @@ export function normalizeSymbol(input: string): string {
     .slice(0, 12);
 }
 
-async function yahooChart(symbol: string, range: string, interval: string): Promise<ChartResult> {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+async function yahooChart(
+  symbol: string,
+  range: string,
+  interval: string,
+  host = "query1.finance.yahoo.com"
+): Promise<ChartResult> {
+  const url = `https://${host}/v8/finance/chart/${encodeURIComponent(
     symbol
   )}?range=${range}&interval=${interval}&includePrePost=false`;
   const res = await fetch(url, { headers: UA, next: { revalidate: 15 } });
@@ -80,17 +85,22 @@ async function stooqDaily(symbol: string, days: number): Promise<ChartResult> {
 }
 
 /**
- * Line-chart history for a symbol. Yahoo first; Stooq daily bars as a
- * fallback for multi-day ranges. Throws on failure — callers must surface
- * the error, never invent a price.
+ * Line-chart history for a symbol. Yahoo first (query1, then query2 — the
+ * two hosts are rate-limited independently, which matters from shared
+ * datacenter IPs); Stooq daily bars as a fallback for multi-day ranges.
+ * Throws on failure — callers must surface the error, never invent a price.
  */
 export async function fetchChart(symbol: string, rangeKey: string): Promise<ChartResult> {
   const cfg = RANGES[rangeKey] ?? RANGES["1M"];
   try {
-    return await yahooChart(symbol, cfg.range, cfg.interval);
-  } catch (err) {
-    if (cfg.stooqDays > 0) return await stooqDaily(symbol, cfg.stooqDays);
-    throw err;
+    return await yahooChart(symbol, cfg.range, cfg.interval, "query1.finance.yahoo.com");
+  } catch {
+    try {
+      return await yahooChart(symbol, cfg.range, cfg.interval, "query2.finance.yahoo.com");
+    } catch {
+      if (cfg.stooqDays > 0) return await stooqDaily(symbol, cfg.stooqDays);
+      throw new Error(`Live price data for ${symbol} is unavailable right now`);
+    }
   }
 }
 
@@ -100,13 +110,16 @@ export async function fetchQuote(symbol: string): Promise<{
   prevClose: number | null;
   name: string | null;
 }> {
-  try {
-    const c = await yahooChart(symbol, "1d", "1m");
-    if (c.price == null) throw new Error("No price");
-    return { price: c.price, prevClose: c.prevClose, name: c.name };
-  } catch {
-    const s = await stooqDaily(symbol, 2);
-    if (s.price == null) throw new Error("No price");
-    return { price: s.price, prevClose: s.prevClose, name: null };
+  for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
+    try {
+      const c = await yahooChart(symbol, "1d", "1m", host);
+      if (c.price == null) throw new Error("No price");
+      return { price: c.price, prevClose: c.prevClose, name: c.name };
+    } catch {
+      // try the next host, then Stooq
+    }
   }
+  const s = await stooqDaily(symbol, 2);
+  if (s.price == null) throw new Error("No price");
+  return { price: s.price, prevClose: s.prevClose, name: null };
 }
