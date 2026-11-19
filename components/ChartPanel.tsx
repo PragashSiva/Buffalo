@@ -116,7 +116,14 @@ export default function ChartPanel({
         )}
         {chart && (
           <span className="ml-auto text-[10px] uppercase tracking-wider text-zinc-600">
-            Source: {chart.source === "yahoo" ? "Yahoo Finance" : "Stooq"} · line only
+            Source:{" "}
+            {{
+              yahoo: "Yahoo Finance",
+              stooq: "Stooq",
+              finnhub: "Finnhub",
+              twelvedata: "Twelve Data",
+            }[chart.source]}{" "}
+            · line only
           </span>
         )}
       </div>

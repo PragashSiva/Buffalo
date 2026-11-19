@@ -7,10 +7,87 @@ const UA = {
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
 };
 
-/** Optional Finnhub key (free tier). When set, Finnhub is tried first:
- *  unlike Yahoo/Stooq it is built for server-side use, so Vercel's
- *  datacenter IPs are not blocked. Get one free at finnhub.io. */
+/** Optional Finnhub key (free tier). Used for the fast quote (order fills);
+ *  its candle endpoint is NOT on the free plan, so charts do not use it
+ *  unless the key is a paid one. Get one free at finnhub.io. */
 const FINNHUB_KEY = process.env.FINNHUB_API_KEY ?? "";
+
+/** Optional Twelve Data key (free tier: 800 calls/day, 8/min). The chart
+ *  source: 1h and 1day candles are included free. Get one at twelvedata.com. */
+const TWELVEDATA_KEY = process.env.TWELVEDATA_API_KEY ?? "";
+
+/** Twelve Data datetimes are wall times in the exchange timezone
+ *  (America/New_York for US listings). Convert one to epoch ms so the
+ *  browser — also in ET for this user — labels the hours correctly. */
+function tzOffsetMs(date: Date, timeZone: string): number {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const parts = Object.fromEntries(
+    dtf.formatToParts(date).map((p) => [p.type, p.value])
+  );
+  const asUTC = Date.UTC(
+    +parts.year,
+    +parts.month - 1,
+    +parts.day,
+    +parts.hour % 24,
+    +parts.minute,
+    +parts.second
+  );
+  return asUTC - date.getTime();
+}
+
+function wallTimeToMs(wall: string, timeZone: string): number {
+  const [datePart, timePart = "00:00:00"] = wall.split(" ");
+  const [y, m, d] = datePart.split("-").map(Number);
+  const [hh, mm, ss] = timePart.split(":").map(Number);
+  const guess = Date.UTC(y, m - 1, d, hh, mm, ss);
+  return guess - tzOffsetMs(new Date(guess), timeZone);
+}
+
+async function twelvedataChart(symbol: string, rangeKey: string): Promise<ChartResult> {
+  if (!TWELVEDATA_KEY) throw new Error("Twelve Data key not configured");
+  // Hourly for short ranges, daily for long ones — this app trades
+  // hourly/daily moves, not minute bars.
+  const cfg: Record<string, { interval: string; outputsize: number }> = {
+    "1D": { interval: "1h", outputsize: 24 },
+    "5D": { interval: "1h", outputsize: 48 },
+    "1M": { interval: "1day", outputsize: 31 },
+    "6M": { interval: "1day", outputsize: 130 },
+    "1Y": { interval: "1day", outputsize: 260 },
+  };
+  const { interval, outputsize } = cfg[rangeKey] ?? cfg["1M"];
+  const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(
+    symbol
+  )}&interval=${interval}&outputsize=${outputsize}&apikey=${TWELVEDATA_KEY}`;
+  const res = await fetch(url, { next: { revalidate: 60 } });
+  if (!res.ok) throw new Error(`Twelve Data returned HTTP ${res.status}`);
+  const json = await res.json();
+  if (json?.status !== "ok" || !Array.isArray(json.values) || json.values.length === 0)
+    throw new Error(`Twelve Data returned no data for ${symbol}: ${json?.message ?? "unknown"}`);
+  const tz = json.meta?.exchange_timezone ?? "America/New_York";
+  const points: { t: number; close: number }[] = (json.values as any[])
+    .map((v) => ({ t: wallTimeToMs(v.datetime, tz), close: Number(v.close) }))
+    .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.close))
+    .sort((a, b) => a.t - b.t);
+  if (points.length === 0) throw new Error(`Twelve Data returned no price points for ${symbol}`);
+  return {
+    symbol,
+    name: null,
+    currency: json.meta?.currency ?? "USD",
+    price: points[points.length - 1].close,
+    prevClose: points.length > 1 ? points[points.length - 2].close : null,
+    points,
+    source: "twelvedata",
+  };
+}
 
 async function finnhubChart(symbol: string, rangeKey: string): Promise<ChartResult> {
   if (!FINNHUB_KEY) throw new Error("Finnhub key not configured");
@@ -142,13 +219,21 @@ async function stooqDaily(symbol: string, days: number): Promise<ChartResult> {
 }
 
 /**
- * Line-chart history for a symbol. Yahoo first (query1, then query2 — the
- * two hosts are rate-limited independently, which matters from shared
- * datacenter IPs); Stooq daily bars as a fallback for multi-day ranges.
+ * Line-chart history for a symbol. Twelve Data first (1h bars for short
+ * ranges, daily bars for long ones — this app trades hourly/daily moves);
+ * then Finnhub candles (paid plans only), Yahoo (query1, then query2),
+ * then Stooq daily bars for multi-day ranges.
  * Throws on failure — callers must surface the error, never invent a price.
  */
 export async function fetchChart(symbol: string, rangeKey: string): Promise<ChartResult> {
   const cfg = RANGES[rangeKey] ?? RANGES["1M"];
+  if (TWELVEDATA_KEY) {
+    try {
+      return await twelvedataChart(symbol, rangeKey);
+    } catch {
+      // fall through to the next source
+    }
+  }
   if (FINNHUB_KEY) {
     try {
       return await finnhubChart(symbol, rangeKey);

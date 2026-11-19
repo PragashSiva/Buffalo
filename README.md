@@ -29,7 +29,7 @@ indicators yet) — more to come as the strategies evolve.
 | Hosting | **Vercel Hobby** (free) | Free, deploys straight from GitHub |
 | Database | **Neon Postgres** (free tier) | Real Postgres, works across devices; a single `DATABASE_URL` env var, no other config. Tables are created automatically on first use (`lib/db.ts`), so there is no migration step. |
 | Charts | **Recharts** | Lightweight line charts |
-| Prices | **Finnhub** (free key) first when set, else **Yahoo Finance chart API** (no key), **Stooq** fallback | Free, no paid APIs. Yahoo/Stooq block datacenter IPs, so on Vercel the Finnhub key is what makes prices work. Proxied through Next.js route handlers (`/api/chart`, `/api/quote`) so the browser never calls the sources directly. |
+| Prices | **Finnhub** quote (free key) for the fast price; **Twelve Data** (free key) for chart history — 1h bars for 1D/5D, daily bars for 1M/6M/1Y. Fallbacks: Yahoo Finance chart API (no key), Stooq | Free, no paid APIs. Yahoo/Stooq block datacenter IPs, so on Vercel the keys are what make prices work. Proxied through Next.js route handlers (`/api/chart`, `/api/quote`) so the browser never calls the sources directly. |
 
 No auth yet — it's a single-user app on a private repo. Add Vercel's
 password protection or proper auth before sharing the URL with anyone.
@@ -52,6 +52,7 @@ database. With it set, everything works and state persists in Postgres.
 | --- | --- | --- |
 | `DATABASE_URL` | Yes, for trading state | Neon dashboard → your free project → connection string. Format: `postgresql://user:password@ep-xxx.us-east-2.aws.neon.tech/neondb?sslmode=require` |
 | `FINNHUB_API_KEY` | Yes, for live prices on Vercel | Free key at [finnhub.io](https://finnhub.io) (free tier: 60 calls/min). Yahoo and Stooq both block Vercel's datacenter IPs, so without this key charts and quotes show an error on the deployed app. |
+| `TWELVEDATA_API_KEY` | Yes, for charts on Vercel | Free key at [twelvedata.com](https://twelvedata.com) (free tier: 800 calls/day, 8/min). Chart source: 1h candles for 1D/5D, daily candles for 1M/6M/1Y. Free Finnhub does not include candles, so without this key charts fall back to Yahoo/Stooq and fail on Vercel. |
 
 That's the only one. There are no API keys: market data comes from Yahoo
 Finance (no key) with a Stooq fallback (no key).
