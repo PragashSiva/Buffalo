@@ -63,3 +63,16 @@ export interface WatchItem {
   price: number | null;
   changePct: number | null;
 }
+
+export interface Suggestion {
+  symbol: string;
+  sector: string;
+  peer: boolean;
+  bias: "LONG" | "SHORT" | "NEUTRAL";
+  strategy: string;
+  entry: number;
+  target: number;
+  stop: number;
+  rationale: string;
+  lastBar: string; // YYYY-MM-DD of the last daily bar the signal used
+}

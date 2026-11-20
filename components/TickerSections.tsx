@@ -1,60 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fmtMoney, fmtPct } from "@/lib/format";
-import type { Trade } from "@/lib/types";
+import type { Suggestion, Trade } from "@/lib/types";
 
 const RECENTS_KEY = "pt-recent-tickers";
 const MAX_RECENTS = 8;
-const MAX_SUGGESTIONS = 8;
 
 interface Quote {
   price: number | null;
   changePct: number | null;
 }
-
-/** Curated liquid large caps / ETFs to suggest. */
-const SUGGESTED: { symbol: string; sector: string }[] = [
-  { symbol: "MSFT", sector: "Software" },
-  { symbol: "GOOGL", sector: "Internet" },
-  { symbol: "AMZN", sector: "E-commerce" },
-  { symbol: "META", sector: "Internet" },
-  { symbol: "AMD", sector: "Semis" },
-  { symbol: "AVGO", sector: "Semis" },
-  { symbol: "TSLA", sector: "EV" },
-  { symbol: "JPM", sector: "Banks" },
-  { symbol: "V", sector: "Payments" },
-  { symbol: "NFLX", sector: "Media" },
-  { symbol: "XOM", sector: "Energy" },
-  { symbol: "UNH", sector: "Health" },
-];
-
-/** Sector lookup for symbols the user may already hold, so sector peers
- *  of holdings can be ranked first in the suggestions. */
-const SECTORS: Record<string, string> = {
-  ...Object.fromEntries(SUGGESTED.map((s) => [s.symbol, s.sector])),
-  AAPL: "Hardware",
-  NVDA: "Semis",
-  SPY: "ETF",
-  QQQ: "ETF",
-  DIA: "ETF",
-  IWM: "ETF",
-  CRM: "Software",
-  ORCL: "Software",
-  INTC: "Semis",
-  MU: "Semis",
-  LLY: "Health",
-  JNJ: "Health",
-  BAC: "Banks",
-  GS: "Banks",
-  MA: "Payments",
-  COST: "Retail",
-  WMT: "Retail",
-  HD: "Retail",
-  DIS: "Media",
-  PLTR: "Software",
-  COIN: "Crypto",
-};
 
 function loadRecents(): string[] {
   if (typeof window === "undefined") return [];
@@ -82,7 +38,9 @@ function saveRecents(list: string[]) {
 }
 
 /** Live quotes for a set of symbols via the app's /api/quote route.
- *  Refreshes every 60s. Never fakes a price — a failed fetch leaves "—". */
+ *  Refreshes every 60s. Never fakes a price — a failed fetch leaves "—".
+ *  Prices may keep updating; only the cards' order and membership are
+ *  frozen (see below). */
 function useQuotes(symbols: string[]) {
   const key = [...symbols].sort().join(",");
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
@@ -174,11 +132,100 @@ function TickerCard({
   );
 }
 
+function SuggestionCard({
+  suggestion,
+  quote,
+  active,
+  onSelect,
+}: {
+  suggestion: Suggestion;
+  quote: Quote | undefined;
+  active: boolean;
+  onSelect: (s: string) => void;
+}) {
+  const q = quote ?? { price: null, changePct: null };
+  const biasStyle =
+    suggestion.bias === "LONG"
+      ? "border-emerald-500/60 text-emerald-400"
+      : suggestion.bias === "SHORT"
+        ? "border-red-500/60 text-red-400"
+        : "border-zinc-700 text-zinc-400";
+  return (
+    <button
+      onClick={() => onSelect(suggestion.symbol)}
+      className={`block w-full border px-2 py-2 text-left ${
+        active
+          ? "border-amber-500 bg-amber-500/10"
+          : "border-zinc-800 bg-zinc-950 hover:border-amber-500/60"
+      }`}
+    >
+      <span className="flex items-center justify-between">
+        <span className="font-mono text-sm font-bold text-amber-400">
+          {suggestion.symbol}
+        </span>
+        <span
+          className={`border px-1.5 py-0.5 font-mono text-[10px] font-bold ${biasStyle}`}
+        >
+          {suggestion.bias}
+        </span>
+      </span>
+      <span className="mt-1 flex items-center justify-between font-mono text-xs">
+        <span className="text-zinc-500">
+          LIVE {fmtMoney(q.price)}
+        </span>
+        <span
+          className={
+            q.changePct == null
+              ? "text-zinc-500"
+              : q.changePct >= 0
+                ? "text-emerald-400"
+                : "text-red-400"
+          }
+        >
+          {fmtPct(q.changePct)}
+        </span>
+      </span>
+      <span className="mt-1.5 grid grid-cols-3 gap-1 font-mono text-[11px]">
+        <span className="block">
+          <span className="block text-[9px] uppercase tracking-wider text-zinc-500">
+            Entry
+          </span>
+          <span className="text-zinc-100">{fmtMoney(suggestion.entry)}</span>
+        </span>
+        <span className="block">
+          <span className="block text-[9px] uppercase tracking-wider text-zinc-500">
+            Target
+          </span>
+          <span className="text-emerald-400">{fmtMoney(suggestion.target)}</span>
+        </span>
+        <span className="block">
+          <span className="block text-[9px] uppercase tracking-wider text-zinc-500">
+            Stop
+          </span>
+          <span className="text-red-400">{fmtMoney(suggestion.stop)}</span>
+        </span>
+      </span>
+      <span className="mt-1.5 block text-[11px] font-semibold text-zinc-200">
+        {suggestion.strategy}
+      </span>
+      <span className="block text-[11px] leading-snug text-zinc-400">
+        {suggestion.rationale}
+      </span>
+      <span className="mt-1 block text-[10px] uppercase tracking-wider text-zinc-500">
+        {suggestion.sector}
+        {suggestion.peer ? " · peer" : ""} · {suggestion.lastBar}
+      </span>
+    </button>
+  );
+}
+
 function Panel({
   title,
+  footnote,
   children,
 }: {
   title: string;
+  footnote?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -187,6 +234,11 @@ function Panel({
         {title}
       </div>
       <div className="p-2">{children}</div>
+      {footnote && (
+        <div className="border-t border-zinc-800 px-3 py-1.5 text-[10px] text-zinc-600">
+          {footnote}
+        </div>
+      )}
     </section>
   );
 }
@@ -204,30 +256,72 @@ export default function TickerSections({
   holdingSymbols: string[];
   onSelect: (s: string) => void;
 }) {
+  // FROZEN PANELS: recents and suggestions are snapshotted once while the
+  // initial load settles, then never change until a full page refresh.
+  // Clicking a card only loads its chart (and records recency to
+  // localStorage for the NEXT load) — it never reorders, adds, or removes
+  // a card in the current view. Live prices still refresh every 60s.
   const [recents, setRecents] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[] | null>(null);
+  const [suggError, setSuggError] = useState<string | null>(null);
 
-  // Hydrate recents from localStorage on mount.
+  const initWindowRef = useRef(true);
+  const tradesMergedRef = useRef(false);
+  const suggStateRef = useRef<"pending" | "fetching" | "done">("pending");
+  const suggTimerRef = useRef<number | null>(null);
+  const propsRef = useRef({
+    currentSymbol,
+    trades,
+    watchlistSymbols,
+    holdingSymbols,
+  });
   useEffect(() => {
-    setRecents(loadRecents());
+    propsRef.current = {
+      currentSymbol,
+      trades,
+      watchlistSymbols,
+      holdingSymbols,
+    };
+  });
+
+  // Init only: snapshot recents from localStorage, with the ticker already
+  // loaded in the chart first. This is the only place recents state is
+  // set from storage. The initial-load window stays open for 3s so the
+  // first trade history can still merge in (see below).
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      initWindowRef.current = false;
+    }, 3000);
+    const stored = loadRecents();
+    const initial = [
+      propsRef.current.currentSymbol,
+      ...stored.filter((s) => s !== propsRef.current.currentSymbol),
+    ].slice(0, MAX_RECENTS);
+    setRecents(initial);
+    saveRecents(initial);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Record every ticker loaded in the chart, most recent first.
+  // Record recency for the NEXT page load only — displayed recents never
+  // move when a card is clicked.
   useEffect(() => {
     if (!currentSymbol) return;
-    setRecents((prev) => {
-      const next = [
-        currentSymbol,
-        ...prev.filter((s) => s !== currentSymbol),
-      ].slice(0, MAX_RECENTS);
-      saveRecents(next);
-      return next;
-    });
+    const stored = loadRecents();
+    saveRecents(
+      [currentSymbol, ...stored.filter((s) => s !== currentSymbol)].slice(
+        0,
+        MAX_RECENTS
+      )
+    );
   }, [currentSymbol]);
 
-  // Merge tickers from recent trades (most recent trade first) when the
-  // trade history loads — appended after tickers actually viewed.
+  // Merge tickers from recent trades once, and only while the initial
+  // load is still settling — never after an order or a click.
   useEffect(() => {
-    if (trades.length === 0) return;
+    if (tradesMergedRef.current || trades.length === 0) return;
+    if (!initWindowRef.current) return;
+    tradesMergedRef.current = true;
     const tradeSyms = [...trades]
       .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
       .map((t) => t.symbol.toUpperCase())
@@ -243,27 +337,63 @@ export default function TickerSections({
     });
   }, [trades]);
 
-  // Suggestions: curated list minus anything already on screen, with
-  // sector peers of current holdings ranked first.
-  const heldSectors = new Set(
-    holdingSymbols.map((s) => SECTORS[s]).filter((s): s is string => Boolean(s))
-  );
-  const excluded = new Set([
-    currentSymbol,
-    ...recents,
-    ...watchlistSymbols.map((s) => s.toUpperCase()),
-    ...holdingSymbols.map((s) => s.toUpperCase()),
-  ]);
-  const suggestions = SUGGESTED.filter((s) => !excluded.has(s.symbol))
-    .sort((a, b) => {
-      const aPeer = heldSectors.has(a.sector) ? 0 : 1;
-      const bPeer = heldSectors.has(b.sector) ? 0 : 1;
-      return aPeer - bPeer;
-    })
-    .slice(0, MAX_SUGGESTIONS);
+  const fetchSuggestions = useCallback(async () => {
+    const { currentSymbol: cur, holdingSymbols: h, watchlistSymbols: w } =
+      propsRef.current;
+    const params = new URLSearchParams({
+      holdings: h.join(","),
+      watchlist: w.join(","),
+      current: cur,
+      recents: loadRecents().join(","),
+    });
+    try {
+      const res = await fetch(`/api/suggestions?${params}`);
+      const data = await res.json();
+      if (!res.ok)
+        throw new Error(data.error ?? "Suggestions failed to load.");
+      setSuggestions(Array.isArray(data.suggestions) ? data.suggestions : []);
+      setSuggError(null);
+    } catch (err) {
+      setSuggError(
+        err instanceof Error ? err.message : "Suggestions failed to load."
+      );
+    } finally {
+      suggStateRef.current = "done";
+    }
+  }, []);
+
+  // Suggestions: one debounced fetch after the initial inputs (trades,
+  // watchlist, holdings) stop changing, then frozen. Clicks never
+  // re-trigger this — the ref guard stops it after the first fetch.
+  useEffect(() => {
+    if (suggStateRef.current !== "pending") return;
+    if (suggTimerRef.current != null) {
+      window.clearTimeout(suggTimerRef.current);
+    }
+    suggTimerRef.current = window.setTimeout(() => {
+      if (suggStateRef.current !== "pending") return;
+      suggStateRef.current = "fetching";
+      void fetchSuggestions();
+    }, 800);
+    return () => {
+      if (suggTimerRef.current != null) {
+        window.clearTimeout(suggTimerRef.current);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trades, watchlistSymbols, holdingSymbols]);
+
+  function retrySuggestions() {
+    suggStateRef.current = "fetching";
+    setSuggError(null);
+    void fetchSuggestions();
+  }
 
   const quoteSymbols = [
-    ...new Set([...recents, ...suggestions.map((s) => s.symbol)]),
+    ...new Set([
+      ...recents,
+      ...(suggestions ?? []).map((s) => s.symbol),
+    ]),
   ];
   const quotes = useQuotes(quoteSymbols);
 
@@ -290,24 +420,37 @@ export default function TickerSections({
         )}
       </Panel>
 
-      <Panel title="Suggested">
-        {suggestions.length === 0 ? (
+      <Panel
+        title="Suggested"
+        footnote="Rule-based signals from daily bars — not investment advice."
+      >
+        {suggError ? (
+          <div className="px-1 py-2">
+            <p className="text-xs text-red-400">{suggError}</p>
+            <button
+              onClick={retrySuggestions}
+              className="mt-2 border border-zinc-700 px-2 py-1 font-mono text-xs text-zinc-300 hover:border-amber-500 hover:text-amber-400"
+            >
+              Try again
+            </button>
+          </div>
+        ) : suggestions === null ? (
           <p className="px-1 py-2 text-xs text-zinc-500">
-            All suggestions are already in your lists.
+            Loading suggestions…
+          </p>
+        ) : suggestions.length === 0 ? (
+          <p className="px-1 py-2 text-xs text-zinc-500">
+            No suggestions right now — everything is already in your lists
+            or has no signal.
           </p>
         ) : (
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2">
             {suggestions.map((s) => (
-              <TickerCard
+              <SuggestionCard
                 key={s.symbol}
-                symbol={s.symbol}
+                suggestion={s}
                 quote={quotes[s.symbol]}
                 active={s.symbol === currentSymbol}
-                tag={
-                  heldSectors.has(s.sector)
-                    ? `${s.sector} · peer`
-                    : s.sector
-                }
                 onSelect={onSelect}
               />
             ))}

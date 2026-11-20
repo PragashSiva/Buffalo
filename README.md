@@ -20,10 +20,15 @@ indicators yet) — more to come as the strategies evolve.
 - **Watchlist** — with live prices and day change
 - **Recent tickers** — every ticker opened in the chart, most recent first
   (stored in the browser only), plus tickers from recent trades; click to
-  load the chart
-- **Suggested tickers** — a curated list of liquid large caps / ETFs with
-  live prices; anything already in the watchlist, recents, or holdings is
-  left out, and sector peers of current holdings are ranked first
+  load the chart. The list is frozen after the page loads — clicking a
+  card never moves it; it only changes on a full page refresh.
+- **Suggested trade ideas** — rule-based LONG / SHORT / NEUTRAL signals
+  (entry, target, stop, strategy, rationale) computed server-side from
+  real 6M daily bars for a curated list of liquid large caps; anything
+  already in the watchlist, recents, or holdings is left out, and sector
+  peers of current holdings are ranked first. The list is frozen after
+  the page loads, like Recent. In-app only — no tips are ever pushed or
+  scheduled.
 - **Account reset** — back to $100,000, positions and trades cleared
   (strategies and watchlist stay)
 
@@ -115,12 +120,14 @@ app/
     trades/route.ts        Trade history
     strategies/route.ts    Strategies + per-strategy stats
     watchlist/route.ts     Watchlist with live quotes
+    suggestions/route.ts   Rule-based trade ideas from 6M daily bars
 components/                AccountSummary, ChartPanel, OrderTicket,
                            PositionsTable, TradeHistory, StrategiesPanel,
                            TickerSections (Recent + Suggested), WatchlistPanel
 lib/
   db.ts                    Neon client, schema auto-creation, $100k seed
   market-data.ts           Yahoo + Stooq fetching, ticker normalization
+  suggestions.ts           Curated list + rule-based signal computation
   format.ts                Money / percent formatting
   types.ts                 Shared types
 db/schema.sql              The same schema, as a reference (app auto-creates it)
