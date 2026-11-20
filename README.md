@@ -18,6 +18,12 @@ indicators yet) — more to come as the strategies evolve.
 - **Named strategies** — save a strategy with its rules, tag orders to it,
   compare per-strategy trade count, win rate, and realized P&L
 - **Watchlist** — with live prices and day change
+- **Recent tickers** — every ticker opened in the chart, most recent first
+  (stored in the browser only), plus tickers from recent trades; click to
+  load the chart
+- **Suggested tickers** — a curated list of liquid large caps / ETFs with
+  live prices; anything already in the watchlist, recents, or holdings is
+  left out, and sector peers of current holdings are ranked first
 - **Account reset** — back to $100,000, positions and trades cleared
   (strategies and watchlist stay)
 
@@ -111,7 +117,7 @@ app/
     watchlist/route.ts     Watchlist with live quotes
 components/                AccountSummary, ChartPanel, OrderTicket,
                            PositionsTable, TradeHistory, StrategiesPanel,
-                           WatchlistPanel
+                           TickerSections (Recent + Suggested), WatchlistPanel
 lib/
   db.ts                    Neon client, schema auto-creation, $100k seed
   market-data.ts           Yahoo + Stooq fetching, ticker normalization

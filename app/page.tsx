@@ -7,6 +7,7 @@ import OrderTicket from "@/components/OrderTicket";
 import PositionsTable from "@/components/PositionsTable";
 import TradeHistory from "@/components/TradeHistory";
 import StrategiesPanel from "@/components/StrategiesPanel";
+import TickerSections from "@/components/TickerSections";
 import WatchlistPanel from "@/components/WatchlistPanel";
 import type {
   ChartData,
@@ -166,6 +167,16 @@ export default function Home() {
 
       <div className="mb-3">
         <AccountSummary portfolio={portfolio} />
+      </div>
+
+      <div className="mb-3">
+        <TickerSections
+          currentSymbol={symbol}
+          trades={trades}
+          watchlistSymbols={watchlist.map((w) => w.symbol)}
+          holdingSymbols={(portfolio?.positions ?? []).map((p) => p.symbol)}
+          onSelect={setSymbol}
+        />
       </div>
 
       <div className="grid gap-3 lg:grid-cols-3">
